@@ -1,0 +1,302 @@
+library(tm)
+library(RTextTools)
+library(e1071)
+library(rjson)
+library(SnowballC)
+library(stringr)
+library(dplyr)
+library(Rcpp)
+library(topicmodels)
+library(ggplot2)
+
+#Algorithms based on the text 
+processData <- function(json) {
+  lines <- readLines(json)
+  json.lines <- lapply(1:length(lines), function(x) { fromJSON(lines[x])})}
+
+business.json <- processData("yelp_training_set_business.json")
+reviews.json <- processData("yelp_training_set_review.json")
+user.json <- processData("yelp_training_set_user.json")
+
+reviews.data <- data.frame(matrix(unlist(reviews.json), nrow = length(reviews.json), byrow = TRUE))
+names(reviews.data) <- c("funny", "useful", "cool", names(reviews.json[[1]])[-1])
+
+user.data <- data.frame(matrix(unlist(user.json), nrow = length(user.json), byrow = TRUE))
+names(user.data) <- c("funny", "useful", "cool", names(user.json[[1]])[-1])
+user.data$useful <- as.numeric(as.character(user.data$useful))
+user.data$cool <- as.numeric(as.character(user.data$cool))
+user.data$funny <- as.numeric(as.character(user.data$funny))
+user.data$average_stars <- as.numeric(as.character(user.data$average_stars))
+user.data$review_count <- as.numeric(as.character(user.data$review_count))
+
+for (i in 1:length(business.json)) 
+{business.json[[i]]$categories <- paste(business.json[[i]]$categories, collapse = ",")}
+business.data.tmp <- data.frame(matrix(unlist(business.json), 
+                                       nrow = length(business.json), byrow = TRUE))
+names(business.data.tmp) <- names(business.json[[1]])[-8]
+
+#all
+alldata <- merge(business.data.tmp, reviews.data, by = "business_id")
+alldata <- merge(user.data, alldata, by = "user_id")
+
+set.seed(19900416)
+data.sample <- sample(1:nrow(alldata), 1000)
+sample1000 <- alldata[data.sample, ]
+data.sample <- sample(1:nrow(alldata), 500)
+sample500 <- alldata[data.sample, ]
+data.sample <- sample(1:nrow(alldata), 300)
+sample300 <- alldata[data.sample, ]
+data.sample <- sample(1:nrow(alldata), 100)
+sample100 <- alldata[data.sample, ]
+
+#Afinn
+# read in the AFINN list
+afinn <- read.delim("AFINN-111.txt",
+                    header = F, quote = '', stringsAsFactors = F)
+names(afinn) <- c('word', 'score')
+# spaces are denoted by "-", so we need to clean it up a bit
+afinn$word.clean <- gsub('-', '', afinn$word)
+# one phrase in the list includes an apostrophe.
+afinn$word.clean <- gsub("[[:punct:]]", '', afinn$word.clean)
+# Afinn sentiment rating for each row
+test<-sample1000
+sample1000$text<-as.character(sample1000$text)
+tf <- t(apply(t(sample1000$text), 2,
+              function(x) str_count(x, afinn$word.clean)))
+sample1000$afinn.rating <- as.vector(tf %*% afinn$score)
+
+test<-sample500
+sample500$text<-as.character(sample500$text)
+tf <- t(apply(t(sample500$text), 2,
+              function(x) str_count(x, afinn$word.clean)))
+sample500$afinn.rating <- as.vector(tf %*% afinn$score)
+
+test<-sample300
+sample300$text<-as.character(sample300$text)
+tf <- t(apply(t(sample300$text), 2,
+              function(x) str_count(x, afinn$word.clean)))
+sample300$afinn.rating <- as.vector(tf %*% afinn$score)
+
+test<-sample100
+sample100$text<-as.character(sample100$text)
+tf <- t(apply(t(sample100$text), 2,
+              function(x) str_count(x, afinn$word.clean)))
+sample100$afinn.rating <- as.vector(tf %*% afinn$score)
+
+# Pos Neg sentiment score for each row
+temp2 = score.sentiment(sample1000$text, pos.words, neg.words, .progress='text')
+sample1000$posnegsenti<-temp2$score
+
+temp2 = score.sentiment(sample500$text, pos.words, neg.words, .progress='text')
+sample500$posnegsenti<-temp2$score
+
+temp2 = score.sentiment(sample300$text, pos.words, neg.words, .progress='text')
+sample300$posnegsenti<-temp2$score
+
+temp2 = score.sentiment(sample100$text, pos.words, neg.words, .progress='text')
+sample100$posnegsenti<-temp2$score
+
+# sentimental tendency
+sample1000$afinn.rating<-as.numeric(sample1000$afinn.rating)
+sample1000$sentiscore<-as.numeric(sample1000$posnegsenti)
+sample1000$rawsenti<-as.factor(ifelse(as.numeric(as.numeric(sample1000$stars.y)) >= mean(as.numeric(sample1000$stars.y)), "1", "0"))
+sample1000$afinnsenti = as.factor(ifelse(sample1000$afinn.rating >= mean(sample1000$afinn.rating), "1", "0"))
+sample1000$posnegsenti = as.factor(ifelse(sample1000$posnegsenti >= mean(sample1000$posnegsenti), "1", "0"))
+
+sample500$afinn.rating<-as.numeric(sample500$afinn.rating)
+sample500$sentiscore<-as.numeric(sample500$posnegsenti)
+sample500$rawsenti<-as.factor(ifelse(as.numeric(as.numeric(sample500$stars.y)) >= mean(as.numeric(sample500$stars.y)), "1", "0"))
+sample500$afinnsenti = as.factor(ifelse(sample500$afinn.rating >= mean(sample500$afinn.rating), "1", "0"))
+sample500$posnegsenti = as.factor(ifelse(sample500$posnegsenti >= mean(sample500$posnegsenti), "1", "0"))
+
+sample300$afinn.rating<-as.numeric(sample300$afinn.rating)
+sample300$sentiscore<-as.numeric(sample300$posnegsenti)
+sample300$rawsenti<-as.factor(ifelse(as.numeric(as.numeric(sample300$stars.y)) >= mean(as.numeric(sample300$stars.y)), "1", "0"))
+sample300$afinnsenti = as.factor(ifelse(sample300$afinn.rating >= mean(sample300$afinn.rating), "1", "0"))
+sample300$posnegsenti = as.factor(ifelse(sample300$posnegsenti >= mean(sample300$posnegsenti), "1", "0"))
+
+sample100$afinn.rating<-as.numeric(sample100$afinn.rating)
+sample100$sentiscore<-as.numeric(sample100$posnegsenti)
+sample100$rawsenti<-as.factor(ifelse(as.numeric(as.numeric(sample100$stars.y)) >= mean(as.numeric(sample100$stars.y)), "1", "0"))
+sample100$afinnsenti = as.factor(ifelse(sample100$afinn.rating >= mean(sample100$afinn.rating), "1", "0"))
+sample100$posnegsenti = as.factor(ifelse(sample100$posnegsenti >= mean(sample100$posnegsenti), "1", "0"))
+
+mat1000= create_matrix(sample1000$text, language="english", 
+                   removeStopwords=FALSE, removeNumbers=TRUE, 
+                   stemWords=FALSE, tm::weightTfIdf)
+mat1000<-as.matrix(mat1000)
+
+mat500= create_matrix(sample500$text, language="english", 
+                       removeStopwords=FALSE, removeNumbers=TRUE, 
+                       stemWords=FALSE, tm::weightTfIdf)
+mat500<-as.matrix(mat500)
+
+mat300= create_matrix(sample300$text, language="english", 
+                       removeStopwords=FALSE, removeNumbers=TRUE, 
+                       stemWords=FALSE, tm::weightTfIdf)
+mat300<-as.matrix(mat300)
+
+mat100= create_matrix(sample100$text, language="english", 
+                       removeStopwords=FALSE, removeNumbers=TRUE, 
+                       stemWords=FALSE, tm::weightTfIdf)
+mat100<-as.matrix(mat100)
+
+
+#Prediction with text
+#1000
+rawsentiment<-sample1000$rawsenti
+afinnsentiment<-sample1000$afinnsenti
+posnegsentiment<-sample1000$posnegsenti
+
+container = create_container(mat1000, as.factor(afinnsentiment),
+                             trainSize=1:800, testSize=801:1000,virgin=FALSE)
+models = train_models(container, algorithms=c("GLMNET" , "SVM", "RF"),cross=5)
+results = classify_models(container, models)
+analytics = create_analytics(container, results)
+summary(analytics)
+
+#500
+rawsentiment<-sample500$rawsenti 
+afinnsentiment<-sample500$afinnsenti 
+posnegsentiment<-sample500$posnegsenti 
+
+container = create_container(mat500, as.factor(afinnsentiment),
+                             trainSize=1:401, testSize=401:500,virgin=FALSE)
+models = train_models(container, algorithms=c("GLMNET" , "SVM", "RF"),cross=5)
+results = classify_models(container, models)
+analytics = create_analytics(container, results)
+summary(analytics)
+
+#300
+rawsentiment<-sample300$rawsenti
+afinnsentiment<-sample300$afinnsenti
+posnegsentiment<-sample300$posnegsenti
+
+container = create_container(mat300, as.factor(afinnsentiment),
+                             trainSize=1:241, testSize=241:300,virgin=FALSE)
+models = train_models(container, algorithms=c("GLMNET" , "SVM", "RF"),cross=5)
+results = classify_models(container, models)
+analytics = create_analytics(container, results)
+summary(analytics)
+
+#100
+rawsentiment<-sample100$rawsenti
+afinnsentiment<-sample100$afinnsenti
+posnegsentiment<-sample100$posnegsenti
+
+container = create_container(mat100, as.factor(afinnsentiment),
+                             trainSize=1:81, testSize=81:100,virgin=FALSE)
+models = train_models(container, algorithms=c("GLMNET" , "SVM", "RF"),cross=5)
+results = classify_models(container, models)
+analytics = create_analytics(container, results)
+summary(analytics)
+
+confmatrix(docsum = analytics@document_summary)
+
+
+#Plot
+alldata$review_count.x<-as.numeric(alldata$review_count.x)
+
+alldata$frc = '<50'
+alldata$frc[alldata$review_count.x > 50] = '50-200'
+alldata$frc[alldata$review_count.x> 200] = '200-500'
+alldata$frc[alldata$review_count.x> 500] = '500-1000'
+alldata$frc[alldata$review_count.x> 1000] = '>1000'
+
+
+qplot(data=alldata,average_stars,review_count.x,color = frc) +
+  xlab("Average stars") +
+  ylab("Posted reviews count of the users")
+
+pastelred="#ff5148"
+ggplot(test, aes_string(x='average_stars', y= 'afinn.rating')) + 
+geom_point(alpha=.2,colour= 'green', fill='green', size=3)+
+geom_smooth(method = "lm",formula=y~x,fullrange=TRUE,
+weight=rel(2),color=pastelred)
+
+ggplot(data=test, aes_string(x='sentiscore')) +
+geom_histogram(fill="#880011") +
+ggtitle("Histogram of review sentiment by stars") +
+labs(x="Sentiment score", y="Count of reviews") +
+facet_wrap(~stars.y)
+
+#Graph for results
+#Raw
+Algorithms1<-c("SVM","RF","GLM")
+R1000<-c(0.610,0.485,0.630)
+R500<-c(0.460,0.460,0.390)
+R300<-c(0.640,0.490,0.545)
+R100<-c(0.620,0.630,0.690)
+Rawscore<-data.frame(Algorithms1,R100,R300,R500,R1000)
+
+mdf <- melt(Rawscore, id.vars="Algorithms1", value.name="Fscore", variable.name="SampleSize")
+mdf$SampleSize<-c(100,100,100,300,300,300,500,500,500,1000,1000,1000)
+
+(p2 <- ggplot(data = mdf, aes(x = SampleSize, y = Fscore, colour = Algorithms1)) +       
+  geom_line(aes(group = Algorithms1)) + geom_point())
+#Pos Neg
+Algorithms1<-c("SVM","RF","GLM")
+R1000<-c(0.760,0.690,0.765)
+R500<-c(0.705,0.645,0.690)
+R300<-c(0.695,0.705,0.710)
+R100<-c(0.690,0.730,0.730)
+PosnegScore<-data.frame(Algorithms1,R100,R300,R500,R1000)
+
+models<-c("Afinn", "Opinion Lexicon")
+R5000<-c(0.830,0.820)
+R2000<-c(0.800,0.800)
+R1500<-c(0.835,0.805)
+R1000<-c(0.800,0.760)
+R500<-c(0.825,0.705)
+R300<-c(0.740,0.695)
+R100<-c(0.625,0.690)
+SVM1<-data.frame(models,R100,R300,R500,R1000,R1500,R2000,R5000)
+
+mdf1 <- melt(SVM1, id.vars="models", value.name="Fscore", variable.name="SampleSize")
+mdf1$SampleSize<-c(100,100,300,300,500,500,1000,1000,1500,1500,2000,2000,5000,5000)
+
+(p2 <- ggplot(data = mdf1, aes(x = SampleSize, y = Fscore, colour = Algorithms1)) +       
+  geom_line(aes(group = Algorithms1)) + geom_point())
+#Afinn
+Algorithms1<-c("SVM","RF","GLM")
+R1000<-c(0.800,0.715,0.745)
+R500<-c(0.825,0.765,0.780)
+R300<-c(0.740,0.730,0.785)
+R100<-c(0.625,0.815,0.605)
+AfinnScore<-data.frame(Algorithms1,R100,R300,R500,R1000)
+
+mdf <- melt(AfinnScore, id.vars="Algorithms1", value.name="Fscore", variable.name="SampleSize")
+mdf$SampleSize<-c(100,100,100,300,300,300,500,500,500,1000,1000,1000)
+
+(p2 <- ggplot(data = mdf, aes(x = SampleSize, y = Fscore, colour = Algorithms1)) +       
+  geom_line(aes(group = Algorithms1)) + geom_point())
+
+sample1000$sort<-c("sample1000")
+sample1000$sort<-c("sample500")
+merge1$sort<-as.factor(merge1$sort)
+merge1<-merge(sample1000,sample500,all=TRUE)
+ggplot(merge1, aes(x=average_stars, y= afinn.rating,color=sort)) + 
+geom_point(aes(colour = factor(sort), size=1))
+
+#Wordcloud according to the rating
+
+emos = levels(factor(sent_df$emotion))
+nemo = length(emos)
+emo.docs = rep("", nemo)
+for (i in 1:nemo)
+{
+  tmp = some_txt[emotion == emos[i]]
+  emo.docs[i] = paste(tmp, collapse=" ")
+}
+
+# remove stopwords
+emo.docs = removeWords(emo.docs, stopwords("english"))
+# create corpus
+corpus = Corpus(VectorSource(emo.docs))
+tdm = TermDocumentMatrix(corpus)
+tdm = as.matrix(tdm)
+colnames(tdm) = emos
+
+# comparison word cloud
+comparison.cloud(tdm, colors = brewer.pal(nemo, "Dark2"),
+                 scale = c(3,.5), random.order = FALSE, title.size = 1.5)
